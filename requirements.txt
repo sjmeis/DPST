@@ -1,0 +1,13 @@
+datasketch
+importlib_resources
+mpmath
+nltk
+numpy
+pandas
+sentence_transformers
+spacy
+stanford_openie
+torch
+tqdm
+transformers
+weaviate
