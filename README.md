@@ -30,3 +30,28 @@ The code for `DP-BART` and `DP-Prompt` can be found in `LLMDP.py`. `DP-MLM` can 
 We also include the evaluation code for cosine similarity (`CS.py`) and G-Eval (`Geval.ipynb`), located in `evaluation`.
 
 NOTE: in all provided notebooks, please make sure to include the correct libraries and link the paths accordingly. This is necessary for the code to run correctly!
+
+## Citation
+If you use this code in your research, please consider citing the published work:
+
+```
+@inproceedings{meisenbacher-etal-2025-leveraging,
+    title = "Leveraging Semantic Triples for Private Document Generation with Local Differential Privacy Guarantees",
+    author = "Meisenbacher, Stephen  and
+      Chevli, Maulik  and
+      Matthes, Florian",
+    editor = "Christodoulopoulos, Christos  and
+      Chakraborty, Tanmoy  and
+      Rose, Carolyn  and
+      Peng, Violet",
+    booktitle = "Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing",
+    month = nov,
+    year = "2025",
+    address = "Suzhou, China",
+    publisher = "Association for Computational Linguistics",
+    url = "https://aclanthology.org/2025.emnlp-main.455/",
+    doi = "10.18653/v1/2025.emnlp-main.455",
+    pages = "8976--8992",
+    ISBN = "979-8-89176-332-6"
+}
+```
