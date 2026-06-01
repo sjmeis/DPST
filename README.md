@@ -1,22 +1,53 @@
-# DP-ST
+<div align="center">
+
+  # DP-ST
+
+  [![PyPI version](https://img.shields.io/pypi/v/dpst.svg)](https://pypi.org/project/dpst/)
+  [![GitHub stars](https://img.shields.io/github/stars/sjmeis/DPST.svg?style=social)](https://github.com/sjmeis/DPST/stargazers)
+  [![License](https://img.shields.io/github/license/sjmeis/DPST.svg)](https://github.com/sjmeis/DPST/blob/main/LICENSE)
+
+</div>
+
 Code repository for the EMNLP 2025 paper: *Leveraging Semantic Triples for Private Document Generation with Local Differential Privacy Guarantees*
 
 ## Getting Started
-Please first make sure to install all requirements before proceeding:
+### Installation
+You can now install `DP-ST` directly as a Python package.
 
+```bash
+# Install the core runtime engine
+pip install dpst
+
+# Install the optional data-preparation extensions required for the initial setup
+pip install "dpst[setup]"
 ```
-pip install -r requirements.txt
+
+**Note on Heavy Runtimes**: We highly recommend installing the correct flavor of PyTorch matching your hardware's CUDA capability before installing this package.
+
+### Automated Database & Cluster Setup
+In order to run `DP-ST`, you must first run the *preparation* stage as described in the paper. This includes booting up your local vector database, extracting triples from a public text corpus, clustering them, and storing them locally.
+
+Ensure your local Weaviate instance is running, then execute the following automated command in your terminal:
+
+```bash
+dpst setup
 ```
 
-In order to run `DP-ST`, you must first run the *preparation* stage as described in the paper. This includes extracting triples from a public text corpus, and then storing these locally into a vector database.
+**Note:** This can take a very long time! We recommend you set it and forget it. Alternatively, you can tweak the `max_rows` parameter of `initialize_database` to use less texts for the database preparation.
 
-We include the `Triple2DB.ipynb` and `triple_cluster.ipynb` notebooks, which must be run (in order) to create the public triple corpus described in the paper. After this is complete, `DPST.py` can be imported and used. This includes saving the clusters from `triple_cluster.ipynb` to `data/clusters`.
+The above replaces the legacy workflow of manually executing `Triple2DB.ipynb` and `triple_cluster.ipynb`. The command will automatically stream the FineWeb public corpus dataset, extract/embed triples into Weaviate, run the MiniBatchKMeans allocations (50k, 100k, and 200k), and write the resulting cluster assets straight into the package data directory. If you prefer a more tailored approach, we still recommend using the notebooks.
 
-Running `DP-ST` is simple if the setup was performed correctly:
+## Usage
 
-```
-import DPST
-X = DPST.DPST(model_checkpoint=MODEL_NAME, hf_token=TOKEN)
+Running `DP-ST` is simple once the automated setup has completed:
+
+```python
+from dpst import DPST
+
+# Initialize the engine (specify mode: "50k", "100k", or "200k")
+X = DPST(mode="50k", model_checkpoint=MODEL_NAME, hf_token=TOKEN)
+
+# Privatize your text corpus
 private_texts = X.privatize([TEXTS], epsilon=DOC_PRIVACY_BUDGET)
 ```
 
