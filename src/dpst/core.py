@@ -18,6 +18,8 @@ from transformers import AutoModel, AutoTokenizer, AutoModelForCausalLM, pipelin
 from sentence_transformers import util
 from openie import StanfordOpenIE
 
+from vllm import LLM, SamplingParams
+
 os.environ["PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION"] = "python"
 
 class DPST:
@@ -74,16 +76,14 @@ class DPST:
         self.model_checkpoint = model_checkpoint
         self.model = AutoModel.from_pretrained("jinaai/jina-embeddings-v3", trust_remote_code=True).to(self.device)
 
-        self.gen_model = AutoModelForCausalLM.from_pretrained(self.model_checkpoint, token=hf_token, device_map=self.device)
-        self.tokenizer = AutoTokenizer.from_pretrained(self.model_checkpoint, token=hf_token)
-        
-        self.pipe = pipeline(
-            "text-generation",
-            model=self.gen_model,
-            tokenizer=self.tokenizer,
-            torch_dtype=torch.bfloat16,
-            device_map="auto",
+        print(f"Loading vLLM Engine for {self.model_checkpoint}...", flush=True)
+        self.llm = LLM(
+            model=self.model_checkpoint,
+            trust_remote_code=True,
+            tensor_parallel_size=1,
+            dtype="bfloat16"
         )
+        self.tokenizer = self.llm.get_tokenizer()
 
         self.ppl_model = AutoModelForCausalLM.from_pretrained("gpt2").to(self.device)
         self.ppl_tokenizer = AutoTokenizer.from_pretrained("gpt2")
@@ -230,11 +230,15 @@ class DPST:
         return ordered
 
     def privatize(self, texts, epsilon=10, DP=True):
-        results = []
-        for i, t in tqdm(enumerate(texts), total=len(texts)):
+        results = [None] * len(texts)
+        prompts_to_generate = []
+        indices_to_generate = []
+        max_tokens_list = []
+
+        for i, t in tqdm(enumerate(texts), total=len(texts), desc="Extracting and Perturbing Triples"):
             triples = self.get_triples_ie(t)
             if len(triples) == 0:
-                results.append(t)
+                results[i] = t
                 continue
 
             if DP:
@@ -263,15 +267,30 @@ class DPST:
                     final.append({"object": m[0], "property": m[1], "subject": m[2]})
                 prompt = self.get_prompt(final)
 
-            outputs = self.pipe(
-                prompt,
-                pad_token_id=self.tokenizer.eos_token_id,
-                max_new_tokens=int(len(self.tokenizer.encode(texts[i], return_tensors="pt")[0]))
-            )
-            generated = outputs[0]["generated_text"][-1]["content"]
+            formatted_prompt = self.tokenizer.apply_chat_template(prompt, tokenize=False, add_generation_prompt=True)
+            
+            prompts_to_generate.append(formatted_prompt)
+            indices_to_generate.append(i)
+            
+            max_tokens = len(self.tokenizer.encode(t))
+            max_tokens_list.append(max(max_tokens, 1))
 
-            generated = generated.split("Output text: ")[-1].strip().replace("\n", "")
-            generated = generated.split("USER:")[0].strip().replace("\n", "")
-            generated = generated.split("\t")[0].split("ASSISTANT")[0].split("USER")[0].split("###")[0].split("Note:")[0].split("Explanation:")[0].split("```")[0].split("EXPECTED_OUTPUT")[0]
-            results.append(generated.strip())    
+        if prompts_to_generate:
+            print(f"Batch executing generation for {len(prompts_to_generate)} documents...", flush=True)
+            
+            sampling_params_list = [
+                SamplingParams(temperature=0.0, max_tokens=m_tok)
+                for m_tok in max_tokens_list
+            ]
+            
+            outputs = self.llm.generate(prompts_to_generate, sampling_params=sampling_params_list, use_tqdm=True)
+            
+            for idx, output in zip(indices_to_generate, outputs):
+                generated = output.outputs[0].text
+
+                generated = generated.split("Output text: ")[-1].strip().replace("\n", "")
+                generated = generated.split("USER:")[0].strip().replace("\n", "")
+                generated = generated.split("\t")[0].split("ASSISTANT")[0].split("USER")[0].split("###")[0].split("Note:")[0].split("Explanation:")[0].split("```")[0].split("EXPECTED_OUTPUT")[0]
+                results[idx] = generated.strip()
+                
         return results
