@@ -43,7 +43,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning, module="google.pr
 warnings.filterwarnings("ignore", category=DeprecationWarning, module="stanfordnlp")
 tf_logging.set_verbosity_error()
 warnings.filterwarnings("ignore", category=UserWarning, module="transformers")
-warnings.filterwarnings("ignore", message="*flash_attn*")
+warnings.filterwarnings("ignore", message=".*flash_attn*")
 
 class DPST:
     def __init__(self, mode: str, hf_token: str = None, model_checkpoint: str = "meta-llama/Llama-3.2-1B-Instruct"):
