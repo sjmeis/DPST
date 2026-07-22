@@ -30,9 +30,9 @@ from nltk import ngrams
 import weaviate
 from weaviate.classes.query import MetadataQuery, Filter
 
-from transformers import AutoModel, AutoTokenizer, AutoModelForCausalLM, PreTrainedModel
+from transformers import AutoTokenizer, AutoModelForCausalLM, PreTrainedModel
 from transformers import logging as tf_logging
-from sentence_transformers import util
+from sentence_transformers import util, SentenceTransformer
 from openie import StanfordOpenIE
 
 from vllm import LLM, SamplingParams
@@ -43,7 +43,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning, module="google.pr
 warnings.filterwarnings("ignore", category=DeprecationWarning, module="stanfordnlp")
 tf_logging.set_verbosity_error()
 warnings.filterwarnings("ignore", category=UserWarning, module="transformers")
-warnings.filterwarnings("ignore", message=".*flash_attn.*")
+warnings.filterwarnings("ignore", message="*flash_attn*")
 
 class DPST:
     def __init__(self, mode: str, hf_token: str = None, model_checkpoint: str = "meta-llama/Llama-3.2-1B-Instruct"):
@@ -113,7 +113,7 @@ class DPST:
             os.environ["HF_TOKEN"] = hf_token
 
         self.model_checkpoint = model_checkpoint
-        self.model = AutoModel.from_pretrained("jinaai/jina-embeddings-v3", trust_remote_code=True).to(self.device)
+        self.model = SentenceTransformer("jinaai/jina-embeddings-v3", trust_remote_code=True, model_kwargs={"attn_implementation": "eager"}).to(self.device)
 
         try:
             import vllm.v1.attention.selector as selector
@@ -130,7 +130,7 @@ class DPST:
             tensor_parallel_size=1,
             dtype="bfloat16",
             enforce_eager=True,
-            gpu_memory_utilization=0.70,
+            gpu_memory_utilization=0.60,
             max_model_len=4096
         )
         self.tokenizer = self.llm.get_tokenizer()
@@ -210,59 +210,59 @@ class DPST:
         ]
         return PROMPT
     
-    def compute_ppl(self, predictions, batch_size: int = 16, add_start_token: bool = True, max_length=32):
-        if self.ppl_tokenizer.pad_token is None:
-            self.ppl_tokenizer.pad_token = self.ppl_tokenizer.eos_token
+    def compute_ppl(self, predictions, batch_size: int = 64, add_start_token: bool = True, max_length: int = 32):
+        if not predictions:
+            return {"perplexities": [], "mean_perplexity": 0.0}
 
-        max_tokenized_len = max_length - 1 if (add_start_token and max_length) else max_length
+        if self.ppl_tokenizer.pad_token_id is None:
+            self.ppl_tokenizer.pad_token = self.ppl_tokenizer.eos_token
+        
+        pad_id = self.ppl_tokenizer.pad_token_id
+        bos_str = self.ppl_tokenizer.bos_token if (add_start_token and self.ppl_tokenizer.bos_token) else ""
+
+        formatted_texts = [f"{bos_str}{text}" for text in predictions] if bos_str else predictions
 
         encodings = self.ppl_tokenizer(
-            predictions,
+            formatted_texts,
             add_special_tokens=False,
             padding=True,
-            truncation=True if max_tokenized_len else False,
-            max_length=max_tokenized_len,
+            truncation=True,
+            max_length=max_length,
             return_tensors="pt",
             return_attention_mask=True,
-        ).to(self.device)
+        )
 
-        encoded_texts = encodings["input_ids"]
-        attn_masks = encodings["attention_mask"]
-
-        if add_start_token:
-            assert torch.all(torch.ge(attn_masks.sum(1), 1)), "Each input text must be at least one token long."
-        else:
-            assert torch.all(torch.ge(attn_masks.sum(1), 2)), "Each input text must be at least two tokens long."
+        input_ids_all = encodings["input_ids"]
+        attn_masks_all = encodings["attention_mask"]
+        num_samples = len(predictions)
 
         ppls = []
-        loss_fct = CrossEntropyLoss(reduction="none")
+        loss_fct = CrossEntropyLoss(reduction="none", ignore_index=pad_id)
 
-        for start_index in range(0, len(encoded_texts), batch_size):
-            end_index = min(start_index + batch_size, len(encoded_texts))
-            encoded_batch = encoded_texts[start_index:end_index]
-            attn_mask = attn_masks[start_index:end_index]
+        with torch.inference_mode(), torch.autocast(device_type=self.device, dtype=torch.bfloat16 if self.device == "cuda" else torch.float32):
+            for start_idx in range(0, num_samples, batch_size):
+                end_idx = min(start_idx + batch_size, num_samples)
 
-            if add_start_token:
-                bos_tokens_tensor = torch.tensor([[self.ppl_tokenizer.bos_token_id]] * encoded_batch.size(dim=0)).to(self.device)
-                encoded_batch = torch.cat([bos_tokens_tensor, encoded_batch], dim=1)
-                attn_mask = torch.cat([torch.ones(bos_tokens_tensor.size(), dtype=torch.int64).to(self.device), attn_mask], dim=1)
+                input_ids = input_ids_all[start_idx:end_idx].to(self.device, non_blocking=True)
+                attn_mask = attn_masks_all[start_idx:end_idx].to(self.device, non_blocking=True)
 
-            labels = encoded_batch
+                shift_logits = self.ppl_model(input_ids, attention_mask=attn_mask).logits[:, :-1, :].contiguous()
+                shift_labels = input_ids[:, 1:].clone().contiguous()
+                
+                shift_labels[attn_mask[:, 1:] == 0] = pad_id
 
-            with torch.no_grad():
-                out_logits = self.ppl_model(encoded_batch, attention_mask=attn_mask).logits
+                loss = loss_fct(
+                    shift_logits.view(-1, shift_logits.size(-1)), 
+                    shift_labels.view(-1)
+                ).view(shift_labels.size())
 
-            shift_logits = out_logits[..., :-1, :].contiguous()
-            shift_labels = labels[..., 1:].contiguous()
-            shift_attention_mask_batch = attn_mask[..., 1:].contiguous()
+                seq_lengths = (shift_labels != pad_id).sum(dim=1).clamp(min=1)
+                sum_loss = loss.sum(dim=1)
+                
+                perplexity_batch = torch.exp(sum_loss / seq_lengths)
+                ppls.extend(perplexity_batch.tolist())
 
-            perplexity_batch = torch.exp(
-                (loss_fct(shift_logits.transpose(1, 2), shift_labels) * shift_attention_mask_batch).sum(1)
-                / shift_attention_mask_batch.sum(1)
-            )
-            ppls += perplexity_batch.tolist()
-
-        return {"perplexities": ppls, "mean_perplexity": np.mean(ppls)}
+        return {"perplexities": ppls, "mean_perplexity": float(np.mean(ppls))}
 
     def get_triples_ie(self, text):
         res = [x for x in self.IEclient.annotate(text)]
@@ -316,22 +316,39 @@ class DPST:
         return ordered
 
     def privatize(self, texts, epsilon=10, DP=True):
-        results = [None] * len(texts)
+        if isinstance(epsilon, (int, float)):
+            eps_list = [float(epsilon)]
+            is_single_eps = True
+        elif isinstance(epsilon, (list, tuple)):
+            eps_list = [float(e) for e in epsilon]
+            is_single_eps = False
+        else:
+            raise ValueError("Epsilon must be an int, float, or list/tuple of numbers.")
+
+        results = {eps: [None] * len(texts) for eps in eps_list}
+
         prompts_to_generate = []
-        indices_to_generate = []
+        generation_metadata = []
         max_tokens_list = []
 
         for i, t in tqdm(enumerate(texts), total=len(texts), desc="Extracting and Perturbing Triples"):
             triples = self.get_triples_ie(t)
+            
             if len(triples) == 0:
-                results[i] = t
+                for eps in eps_list:
+                    results[eps][i] = t
                 continue
 
-            if DP:
-                eps = epsilon / len(triples)
-                query_vectors = self.model.encode(triples, task="text-matching", truncate_dim=32, max_length=64)
+            max_tokens = max(len(self.tokenizer.encode(t)), 1)
 
-                res = util.semantic_search(query_embeddings=torch.tensor(query_vectors).to(self.device), corpus_embeddings=self.centroids, top_k=1)
+            if DP:
+                query_vectors = self.model.encode(triples, task="text-matching", truncate_dim=32)
+                
+                res = util.semantic_search(
+                    query_embeddings=torch.tensor(query_vectors).to(self.device), 
+                    corpus_embeddings=self.centroids, 
+                    top_k=1
+                )
                 clusters = [r[0]["corpus_id"] for r in res]
 
                 candidates = []
@@ -339,44 +356,63 @@ class DPST:
                     near = self.query_db(q, c)
                     if len(near) > 0:
                         candidates.append(near)
-                private_triples = [self.exponential(c, eps) for c in candidates]
 
-                final = []
-                for p in private_triples:
-                    m = p.split(" | ")
-                    final.append({"subject": m[0], "property": m[1], "object": m[2]})
-                prompt = self.get_prompt(final)
+                for eps in eps_list:
+                    eps_per_triple = eps / len(triples)
+                    private_triples = [self.exponential(c, eps_per_triple) for c in candidates]
+
+                    final = []
+                    for p in private_triples:
+                        if not p:
+                            continue
+                        m = p.split(" | ")
+                        if len(m) == 3:
+                            final.append({"subject": m[0].strip(), "property": m[1].strip(), "object": m[2].strip()})
+                        elif len(m) == 2:
+                            final.append({"subject": m[0].strip(), "property": "related to", "object": m[1].strip()})
+
+                    prompt = self.get_prompt(final)
+                    formatted_prompt = self.tokenizer.apply_chat_template(prompt, tokenize=False, add_generation_prompt=True)
+                    
+                    prompts_to_generate.append(formatted_prompt)
+                    generation_metadata.append((eps, i))
+                    max_tokens_list.append(max_tokens)
+
             else:
                 final = []
                 for x in triples:
                     m = x.split(" | ")
-                    final.append({"subject": m[0], "property": m[1], "object": m[2]})
-                prompt = self.get_prompt(final)
+                    if len(m) == 3:
+                        final.append({"subject": m[0].strip(), "property": m[1].strip(), "object": m[2].strip()})
+                    elif len(m) == 2:
+                        final.append({"subject": m[0].strip(), "property": "related to", "object": m[1].strip()})
 
-            formatted_prompt = self.tokenizer.apply_chat_template(prompt, tokenize=False, add_generation_prompt=True)
-            
-            prompts_to_generate.append(formatted_prompt)
-            indices_to_generate.append(i)
-            
-            max_tokens = len(self.tokenizer.encode(t))
-            max_tokens_list.append(max(max_tokens, 1))
+                prompt = self.get_prompt(final)
+                formatted_prompt = self.tokenizer.apply_chat_template(prompt, tokenize=False, add_generation_prompt=True)
+
+                for eps in eps_list:
+                    prompts_to_generate.append(formatted_prompt)
+                    generation_metadata.append((eps, i))
+                    max_tokens_list.append(max_tokens)
 
         if prompts_to_generate:
-            print(f"Batch executing generation for {len(prompts_to_generate)} documents...", flush=True)
-            
+            print(f"Executing vLLM batch generation for {len(prompts_to_generate)} total prompts across {len(eps_list)} epsilon(s)...", flush=True)
+
             sampling_params_list = [
                 SamplingParams(temperature=0.0, max_tokens=m_tok)
                 for m_tok in max_tokens_list
             ]
-            
-            outputs = self.llm.generate(prompts_to_generate, sampling_params=sampling_params_list, use_tqdm=True)
-            
-            for idx, output in zip(indices_to_generate, outputs):
-                generated = output.outputs[0].text
 
+            outputs = self.llm.generate(prompts_to_generate, sampling_params=sampling_params_list, use_tqdm=True)
+
+            for (eps, idx), output in zip(generation_metadata, outputs):
+                generated = output.outputs[0].text
                 generated = generated.split("Output text: ")[-1].strip().replace("\n", "")
                 generated = generated.split("USER:")[0].strip().replace("\n", "")
                 generated = generated.split("\t")[0].split("ASSISTANT")[0].split("USER")[0].split("###")[0].split("Note:")[0].split("Explanation:")[0].split("```")[0].split("EXPECTED_OUTPUT")[0]
-                results[idx] = generated.strip()
                 
+                results[eps][idx] = generated.strip()
+
+        if is_single_eps:
+            return results[eps_list[0]]
         return results
