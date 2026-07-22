@@ -18,8 +18,8 @@ except Exception:
 
 import json
 from collections import defaultdict
-from functools import partial
 import importlib.resources as pkg_resources
+import gc
 
 import numpy as np
 from torch.nn import CrossEntropyLoss
@@ -31,7 +31,6 @@ import weaviate
 from weaviate.classes.query import MetadataQuery, Filter
 
 from transformers import AutoModel, AutoTokenizer, AutoModelForCausalLM, PreTrainedModel
-import logging
 from transformers import logging as tf_logging
 from sentence_transformers import util
 from openie import StanfordOpenIE
@@ -144,6 +143,44 @@ class DPST:
     def cleanup(self):
         if hasattr(self, 'client') and self.client:
             self.client.close()
+
+        if hasattr(self, 'llm') and self.llm is not None:
+            try:
+                if hasattr(self.llm.llm_engine, 'shutdown_background_loop'):
+                    self.llm.llm_engine.shutdown_background_loop()
+                elif hasattr(self.llm.llm_engine, 'model_executor'):
+                    self.llm.llm_engine.model_executor.shutdown()
+            except Exception as e:
+                pass
+            del self.llm
+            self.llm = None
+
+        if hasattr(self, 'model') and self.model is not None:
+            try:
+                self.model.to("cpu")
+            except Exception:
+                pass
+            del self.model
+            self.model = None
+
+        if hasattr(self, 'ppl_model') and self.ppl_model is not None:
+            try:
+                self.ppl_model.to("cpu")
+            except Exception:
+                pass
+            del self.ppl_model
+            self.ppl_model = None
+
+        if hasattr(self, 'IEclient'):
+            del self.IEclient
+            self.IEclient = None
+
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.ipc_collect()
+
+        print("Cleanup complete. GPU memory freed.", flush=True)
 
     def exponential(self, candidates, epsilon, sensitivity=1):
         probabilities = [np.exp(epsilon * x[1] / (2 * sensitivity)) for x in candidates]
