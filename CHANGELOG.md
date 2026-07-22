@@ -1,4 +1,8 @@
-## [0.2.0] - 2026-07-014
+## [0.3.x] - 2026-07-22
+These changes address compatibility issue introduced by `vLLM`, as well as formatting and squashing of annoying warnings. The requirements and package dependencies have been updated accordingly.
+The functionality remains the same as before, but with real speedups due to batch processing with `vLLM`!
+
+## [0.2.0] - 2026-07-14
 ### Added
 DP-ST now runs quicker! We have shifted from `transformers` to `vLLM`, which runs the reconstruction stage in batches. Note that the dependencies for this package have now changed.
 
