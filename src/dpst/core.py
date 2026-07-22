@@ -1,11 +1,27 @@
 import os
+import torch
+
+os.environ["VLLM_USE_FLASHINFER_SAMPLER"] = "0"
+os.environ["VLLM_V1_ATTENTION_BACKEND"] = "TORCH_SDPA"
+os.environ["VLLM_ATTENTION_BACKEND"] = "TORCH_SDPA"
+os.environ["VLLM_ENABLE_V1_MULTIPROCESSING"] = "0"
+os.environ["PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION"] = "python"
+
+if hasattr(torch.cuda, "is_pin_memory_available"):
+    torch.cuda.is_pin_memory_available = lambda: True
+
+try:
+    import vllm.utils.platform_utils as platform_utils
+    platform_utils.is_uva_available = lambda: True
+except Exception:
+    pass
+
 import json
 from collections import defaultdict
 from functools import partial
 import importlib.resources as pkg_resources
 
 import numpy as np
-import torch
 from torch.nn import CrossEntropyLoss
 from tqdm.auto import tqdm
 from datasketch import MinHash, MinHashLSH
@@ -14,13 +30,21 @@ from nltk import ngrams
 import weaviate
 from weaviate.classes.query import MetadataQuery, Filter
 
-from transformers import AutoModel, AutoTokenizer, AutoModelForCausalLM, pipeline
+from transformers import AutoModel, AutoTokenizer, AutoModelForCausalLM, PreTrainedModel
+import logging
+from transformers import logging as tf_logging
 from sentence_transformers import util
 from openie import StanfordOpenIE
 
 from vllm import LLM, SamplingParams
 
-os.environ["PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION"] = "python"
+import warnings
+warnings.filterwarnings("ignore", category=ResourceWarning)
+warnings.filterwarnings("ignore", category=DeprecationWarning, module="google.protobuf")
+warnings.filterwarnings("ignore", category=DeprecationWarning, module="stanfordnlp")
+tf_logging.set_verbosity_error()
+warnings.filterwarnings("ignore", category=UserWarning, module="transformers")
+warnings.filterwarnings("ignore", message=".*flash_attn.*")
 
 class DPST:
     def __init__(self, mode: str, hf_token: str = None, model_checkpoint: str = "meta-llama/Llama-3.2-1B-Instruct"):
@@ -73,15 +97,42 @@ class DPST:
         }
         self.IEclient = StanfordOpenIE(properties=self.properties)
 
+        class DefaultDictDescriptor:
+            def __get__(self, instance, owner):
+                if instance is None:
+                    return self
+                if "_all_tied_weights_keys" not in instance.__dict__:
+                    instance.__dict__["_all_tied_weights_keys"] = {}
+                return instance.__dict__["_all_tied_weights_keys"]
+
+            def __set__(self, instance, value):
+                instance.__dict__["_all_tied_weights_keys"] = value
+
+        PreTrainedModel.all_tied_weights_keys = DefaultDictDescriptor()
+
+        if hf_token:
+            os.environ["HF_TOKEN"] = hf_token
+
         self.model_checkpoint = model_checkpoint
         self.model = AutoModel.from_pretrained("jinaai/jina-embeddings-v3", trust_remote_code=True).to(self.device)
+
+        try:
+            import vllm.v1.attention.selector as selector
+            from vllm.v1.attention.backend import AttentionBackendEnum
+            
+            selector.get_attn_backend = lambda *args, **kwargs: AttentionBackendEnum.TORCH_SDPA
+        except Exception:
+            pass
 
         print(f"Loading vLLM Engine for {self.model_checkpoint}...", flush=True)
         self.llm = LLM(
             model=self.model_checkpoint,
             trust_remote_code=True,
             tensor_parallel_size=1,
-            dtype="bfloat16"
+            dtype="bfloat16",
+            enforce_eager=True,
+            gpu_memory_utilization=0.70,
+            max_model_len=4096
         )
         self.tokenizer = self.llm.get_tokenizer()
 
@@ -123,10 +174,8 @@ class DPST:
         return PROMPT
     
     def compute_ppl(self, predictions, batch_size: int = 16, add_start_token: bool = True, max_length=32):
-        if self.ppl_tokenizer.pad_token is None and batch_size > 1:
-            existing_special_tokens = list(self.ppl_tokenizer.special_tokens_map_extended.values())
-            assert len(existing_special_tokens) > 0, "Model must have at least one special token to use for padding."
-            self.ppl_tokenizer.add_special_tokens({"pad_token": existing_special_tokens[0]})
+        if self.ppl_tokenizer.pad_token is None:
+            self.ppl_tokenizer.pad_token = self.ppl_tokenizer.eos_token
 
         max_tokenized_len = max_length - 1 if (add_start_token and max_length) else max_length
 
@@ -258,13 +307,13 @@ class DPST:
                 final = []
                 for p in private_triples:
                     m = p.split(" | ")
-                    final.append({"object": m[0], "property": m[1], "subject": m[2]})
+                    final.append({"subject": m[0], "property": m[1], "object": m[2]})
                 prompt = self.get_prompt(final)
             else:
                 final = []
                 for x in triples:
                     m = x.split(" | ")
-                    final.append({"object": m[0], "property": m[1], "subject": m[2]})
+                    final.append({"subject": m[0], "property": m[1], "object": m[2]})
                 prompt = self.get_prompt(final)
 
             formatted_prompt = self.tokenizer.apply_chat_template(prompt, tokenize=False, add_generation_prompt=True)
