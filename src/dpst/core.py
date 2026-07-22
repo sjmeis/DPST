@@ -1,9 +1,6 @@
 import os
 import torch
 
-os.environ["VLLM_USE_FLASHINFER_SAMPLER"] = "0"
-os.environ["VLLM_V1_ATTENTION_BACKEND"] = "TORCH_SDPA"
-os.environ["VLLM_ATTENTION_BACKEND"] = "TORCH_SDPA"
 os.environ["VLLM_ENABLE_V1_MULTIPROCESSING"] = "0"
 os.environ["PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION"] = "python"
 
@@ -30,8 +27,7 @@ from nltk import ngrams
 import weaviate
 from weaviate.classes.query import MetadataQuery, Filter
 
-from transformers import AutoTokenizer, AutoModelForCausalLM, PreTrainedModel
-from transformers import logging as tf_logging
+from transformers import AutoModel, AutoTokenizer, AutoModelForCausalLM, PreTrainedModel
 from sentence_transformers import util, SentenceTransformer
 from openie import StanfordOpenIE
 
@@ -41,9 +37,6 @@ import warnings
 warnings.filterwarnings("ignore", category=ResourceWarning)
 warnings.filterwarnings("ignore", category=DeprecationWarning, module="google.protobuf")
 warnings.filterwarnings("ignore", category=DeprecationWarning, module="stanfordnlp")
-tf_logging.set_verbosity_error()
-warnings.filterwarnings("ignore", category=UserWarning, module="transformers")
-warnings.filterwarnings("ignore", message=".*flash_attn*")
 
 class DPST:
     def __init__(self, mode: str, hf_token: str = None, model_checkpoint: str = "meta-llama/Llama-3.2-1B-Instruct"):
@@ -113,7 +106,7 @@ class DPST:
             os.environ["HF_TOKEN"] = hf_token
 
         self.model_checkpoint = model_checkpoint
-        self.model = SentenceTransformer("jinaai/jina-embeddings-v3", trust_remote_code=True).to(self.device)
+        self.model = AutoModel.from_pretrained("jinaai/jina-embeddings-v3", trust_remote_code=True).to(self.device)
 
         try:
             import vllm.v1.attention.selector as selector
@@ -342,7 +335,7 @@ class DPST:
             max_tokens = max(len(self.tokenizer.encode(t)), 1)
 
             if DP:
-                query_vectors = self.model.encode(triples, task="text-matching", truncate_dim=32)
+                query_vectors = self.model.encode(triples, task="text-matching", truncate_dim=32, max_length=64)
                 
                 res = util.semantic_search(
                     query_embeddings=torch.tensor(query_vectors).to(self.device), 

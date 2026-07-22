@@ -1,5 +1,6 @@
 datasketch==2.0.0
 einops>=0.8.2
+flash-attn>=2.5.0
 nltk==3.10.0
 numpy==2.0.2
 peft==0.19.1

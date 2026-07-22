@@ -24,7 +24,7 @@ pip install "dpst[setup]"
 
 **Note on Heavy Runtimes**: We highly recommend installing the correct flavor of PyTorch matching your hardware's CUDA capability before installing this package.
 
-#### More installation notes
+#### More installation notes and tips
 We have done our best to configure `DP-ST` and its set environment variables such that it can run as smoothly as possible on all setups. However, `vLLM` is currently quite finicky, so there may be some holdups with your runtime.
 
 To summarize what we did:
@@ -34,7 +34,7 @@ To summarize what we did:
 
 Please also make sure to pass `hf_token` to initizalization, if applicable to reconstruction model you have chosen.
 
-For the default embedding model (`jina-embeddings-v3`), you may see warnings like `flash_attn is not installed. Using PyTorch native attention implementation.` These are safe to ignore! Alternatively, you can also install `flash-attn` and this should replace the default PyTorch implementation (here, `xformers`) by default. **Important:** if you already have `jina-embeddings-v3` cached, and this was downloaded *before* `peft` was installed, the model will not function as intended. Delete the cached model and re-download.
+For the default embedding model (`jina-embeddings-v3`), you may see warnings like `flash_attn is not installed. Using PyTorch native attention implementation.` While these are generally safe to ignore, we highly recommend installing `flash-attn` (already in the requirements), as we have noticed particularly with `jina-embeddings-v3` that not doing so leads to headaches and odd behavior.
 
 Finally, you will likely have to run `(uv) pip uninstall torchcodec` following installation, as this library creates compatability issues.
 
