@@ -34,7 +34,7 @@ To summariuze what we did:
 
 Please also make sure to pass `hf_token` to initizalization, if applicable to reconstruction model you have chosen.
 
-For the default embedding model (`jina-embeddings-v3`), you may see warnings like `flash_attn is not installed. Using PyTorch native attention implementation.` These are safe to ignore!
+For the default embedding model (`jina-embeddings-v3`), you may see warnings like `flash_attn is not installed. Using PyTorch native attention implementation.` These are safe to ignore! Alternatively, you can also install `flash-attn` and this should replace the default PyTorch implementation (here, `xformers`) by default.
 
 Finally, you will likely have to run `(uv) pip uninstall torchcodec` following installation, as this library creates compatability issues.
 

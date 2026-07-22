@@ -113,7 +113,7 @@ class DPST:
             os.environ["HF_TOKEN"] = hf_token
 
         self.model_checkpoint = model_checkpoint
-        self.model = SentenceTransformer("jinaai/jina-embeddings-v3", trust_remote_code=True, model_kwargs={"attn_implementation": "eager"}).to(self.device)
+        self.model = SentenceTransformer("jinaai/jina-embeddings-v3", trust_remote_code=True).to(self.device)
 
         try:
             import vllm.v1.attention.selector as selector
@@ -210,7 +210,7 @@ class DPST:
         ]
         return PROMPT
     
-    def compute_ppl(self, predictions, batch_size: int = 64, add_start_token: bool = True, max_length: int = 32):
+    def compute_ppl(self, predictions, batch_size: int = 32, add_start_token: bool = True, max_length: int = 32):
         if not predictions:
             return {"perplexities": [], "mean_perplexity": 0.0}
 

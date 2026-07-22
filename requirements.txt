@@ -11,3 +11,4 @@ tqdm==4.69.0
 transformers==5.14.1
 vllm==0.25.1
 weaviate-client==4.22.0
+xformers==0.0.35
