@@ -27,14 +27,14 @@ pip install "dpst[setup]"
 #### More installation notes
 We have done our best to configure `DP-ST` and its set environment variables such that it can run as smoothly as possible on all setups. However, `vLLM` is currently quite finicky, so there may be some holdups with your runtime.
 
-To summariuze what we did:
+To summarize what we did:
 * **`VLLM_ENABLE_V1_MULTIPROCESSING="0"`**: Forces vLLM to run in-process. Under WSL2 (if applicable to you), spawned worker subprocesses fail the `UvaBuffer` check (`UVA is not available`).
 * **`VLLM_USE_FLASHINFER_SAMPLER="0"`**: Disables FlashInfer sampling backend, avoiding runtime errors on newer GPU architectures (SM120/Blackwell).
 * **`VLLM_ATTENTION_BACKEND="TORCH_SDPA"`**: Directs attention operations through PyTorch's native Scaled Dot-Product Attention (SDPA), bypassing standalone `flash-attn` build dependencies.
 
 Please also make sure to pass `hf_token` to initizalization, if applicable to reconstruction model you have chosen.
 
-For the default embedding model (`jina-embeddings-v3`), you may see warnings like `flash_attn is not installed. Using PyTorch native attention implementation.` These are safe to ignore! Alternatively, you can also install `flash-attn` and this should replace the default PyTorch implementation (here, `xformers`) by default.
+For the default embedding model (`jina-embeddings-v3`), you may see warnings like `flash_attn is not installed. Using PyTorch native attention implementation.` These are safe to ignore! Alternatively, you can also install `flash-attn` and this should replace the default PyTorch implementation (here, `xformers`) by default. **Important:** if you already have `jina-embeddings-v3` cached, and this was downloaded *before* `peft` was installed, the model will not function as intended. Delete the cached model and re-download.
 
 Finally, you will likely have to run `(uv) pip uninstall torchcodec` following installation, as this library creates compatability issues.
 
