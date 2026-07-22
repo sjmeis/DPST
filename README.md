@@ -36,6 +36,8 @@ Please also make sure to pass `hf_token` to initizalization, if applicable to re
 
 For the default embedding model (`jina-embeddings-v3`), you may see warnings like `flash_attn is not installed. Using PyTorch native attention implementation.` These are safe to ignore!
 
+Finally, you will likely have to run `(uv) pip uninstall torchcodec` following installation, as this library creates compatability issues.
+
 ### Automated Database & Cluster Setup
 In order to run `DP-ST`, you must first run the *preparation* stage as described in the paper. This includes booting up your local vector database, extracting triples from a public text corpus, clustering them, and storing them locally.
 
