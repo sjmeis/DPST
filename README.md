@@ -60,7 +60,7 @@ from dpst import DPST
 X = DPST(mode="50k", model_checkpoint=MODEL_NAME, hf_token=TOKEN)
 
 # Privatize your text corpus
-private_texts = X.privatize([TEXTS], epsilon=DOC_PRIVACY_BUDGET)
+private_texts = X.privatize([TEXTS], epsilon=DOC_PRIVACY_BUDGET) # or epsilon=LIST_OF_EPSILONS (for epsilon sweeps)
 
 # Cleanup all resources (recommended!)
 X.cleanup()
