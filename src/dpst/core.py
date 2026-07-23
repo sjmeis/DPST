@@ -90,9 +90,15 @@ class DPST:
             'openie.triple.maxEntailments': '10',
             'openie.resolve_coref': 'false',
             'openie.triple.strict': 'false',
-            'threads': str(min(mp.cpu_count(), 16))
+            'openie.threads': str(min(mp.cpu_count(), 16))
         }
-        self.IEclient = StanfordOpenIE(properties=self.properties)
+        self.IEclient = StanfordOpenIE(
+            corenlp_options={
+                "annotators": "openie",
+                "memory": "8g",
+                "threads": min(mp.cpu_count(), 16),
+            }
+        )
 
         class DefaultDictDescriptor:
             def __get__(self, instance, owner):
@@ -263,7 +269,7 @@ class DPST:
         return {"perplexities": ppls, "mean_perplexity": float(np.mean(ppls))}
 
     def get_triples_ie(self, text):
-        res = [x for x in self.IEclient.annotate(text)]
+        res = [x for x in self.IEclient.annotate(text, annotators=['openie'], properties=self.properties)]
         temp = [tuple(x.values()) for x in res]
 
         current = defaultdict(list)
@@ -342,7 +348,7 @@ class DPST:
             max_tokens = max(len(self.tokenizer.encode(t)), 1)
 
             if DP:
-                query_vectors = self.model.encode(triples, task="text-matching", truncate_dim=32, max_length=64)
+                query_vectors = self.model.encode(triples, task="text-matching", truncate_dim=32, max_length=64, show_progress_bar=False)
                 
                 res = util.semantic_search(
                     query_embeddings=torch.tensor(query_vectors).to(self.device), 
