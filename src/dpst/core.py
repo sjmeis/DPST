@@ -269,7 +269,7 @@ class DPST:
         return {"perplexities": ppls, "mean_perplexity": float(np.mean(ppls))}
 
     def get_triples_ie(self, text):
-        res = [x for x in self.IEclient.annotate(text, annotators=['openie'], properties=self.properties)]
+        res = [x for x in self.IEclient.annotate(text, properties=self.properties)]
         temp = [tuple(x.values()) for x in res]
 
         current = defaultdict(list)
