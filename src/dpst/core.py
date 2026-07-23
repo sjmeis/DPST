@@ -17,6 +17,7 @@ import json
 from collections import defaultdict
 import importlib.resources as pkg_resources
 import gc
+import multiprocessing as mp
 
 import numpy as np
 from torch.nn import CrossEntropyLoss
@@ -28,7 +29,7 @@ import weaviate
 from weaviate.classes.query import MetadataQuery, Filter
 
 from transformers import AutoModel, AutoTokenizer, AutoModelForCausalLM, PreTrainedModel
-from sentence_transformers import util, SentenceTransformer
+from sentence_transformers import util
 from openie import StanfordOpenIE
 
 from vllm import LLM, SamplingParams
@@ -85,7 +86,11 @@ class DPST:
 
         self.properties = {
             "openie.affinity_probability_cap": 2 / 3,
-            "openie.triple.strict": False,
+            'openie.max_sentence_length': '80',
+            'openie.triple.maxEntailments': '10',
+            'openie.resolve_coref': 'false',
+            'openie.triple.strict': 'false',
+            'threads': str(min(mp.cpu_count(), 16))
         }
         self.IEclient = StanfordOpenIE(properties=self.properties)
 
@@ -325,6 +330,8 @@ class DPST:
         max_tokens_list = []
 
         for i, t in tqdm(enumerate(texts), total=len(texts), desc="Extracting and Perturbing Triples"):
+            if len(t) > 100000: # hard cap for openie
+                t = t[:100000]
             triples = self.get_triples_ie(t)
             
             if len(triples) == 0:

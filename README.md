@@ -27,16 +27,20 @@ pip install "dpst[setup]"
 #### More installation notes and tips
 We have done our best to configure `DP-ST` and its set environment variables such that it can run as smoothly as possible on all setups. However, `vLLM` is currently quite finicky, so there may be some holdups with your runtime.
 
-To summarize what we did:
 * **`VLLM_ENABLE_V1_MULTIPROCESSING="0"`**: Forces vLLM to run in-process. Under WSL2 (if applicable to you), spawned worker subprocesses fail the `UvaBuffer` check (`UVA is not available`).
-* **`VLLM_USE_FLASHINFER_SAMPLER="0"`**: Disables FlashInfer sampling backend, avoiding runtime errors on newer GPU architectures (SM120/Blackwell).
-* **`VLLM_ATTENTION_BACKEND="TORCH_SDPA"`**: Directs attention operations through PyTorch's native Scaled Dot-Product Attention (SDPA), bypassing standalone `flash-attn` build dependencies.
+* You will likely have to run `(uv) pip uninstall torchcodec` following installation, as this library creates compatability issues.
+* For the default embedding model (`jina-embeddings-v3`), you may see warnings like `flash_attn is not installed. Using PyTorch native attention implementation.` While these are generally safe to ignore, we highly recommend installing `flash-attn` (already in the requirements), as we have noticed particularly with `jina-embeddings-v3` that not doing so leads to headaches and odd behavior. This can be done with the following:
+
+```bash
+git clone https://github.com/Dao-AILab/flash-attention.git
+cd flash-attention/
+export TORCH_CUDA_ARCH_LIST="12.0"
+export FLASH_ATTN_CUDA_ARCHS="120"
+export FLASH_ATTENTION_FORCE_BUILD=TRUE
+uv pip install . --no-build-isolation --no-cache-dir
+```
 
 Please also make sure to pass `hf_token` to initizalization, if applicable to reconstruction model you have chosen.
-
-For the default embedding model (`jina-embeddings-v3`), you may see warnings like `flash_attn is not installed. Using PyTorch native attention implementation.` While these are generally safe to ignore, we highly recommend installing `flash-attn` (already in the requirements), as we have noticed particularly with `jina-embeddings-v3` that not doing so leads to headaches and odd behavior.
-
-Finally, you will likely have to run `(uv) pip uninstall torchcodec` following installation, as this library creates compatability issues.
 
 ### Automated Database & Cluster Setup
 In order to run `DP-ST`, you must first run the *preparation* stage as described in the paper. This includes booting up your local vector database, extracting triples from a public text corpus, clustering them, and storing them locally.
