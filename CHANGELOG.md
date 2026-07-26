@@ -4,6 +4,7 @@ The functionality remains the same as before, but with real speedups due to batc
 
 ### Added
  - To maximize efficiency, `privatize` now also accepts a list of `epsilon`, which will then returning a dictionary of privatized texts for each privacy budget. This runs in nearly the same amount of time as single mode!
+ - Cleanup function for vLLM, to allow for repeat runs on different parameter setups.
 
 ## [0.2.0] - 2026-07-14
 ### Added

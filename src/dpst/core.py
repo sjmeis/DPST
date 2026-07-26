@@ -135,7 +135,7 @@ class DPST:
             dtype="bfloat16",
             enforce_eager=True,
             gpu_memory_utilization=0.60,
-            max_model_len=4096
+            max_model_len=8192
         )
         self.tokenizer = self.llm.get_tokenizer()
 
@@ -145,19 +145,45 @@ class DPST:
         print("Initialization Finished.", flush=True)   
 
     def cleanup(self):
+        print("Cleaning up DPST resources...", flush=True)
+
         if hasattr(self, 'client') and self.client:
-            self.client.close()
+            try:
+                self.client.close()
+            except Exception:
+                pass
 
         if hasattr(self, 'llm') and self.llm is not None:
             try:
                 if hasattr(self.llm.llm_engine, 'shutdown_background_loop'):
                     self.llm.llm_engine.shutdown_background_loop()
-                elif hasattr(self.llm.llm_engine, 'model_executor'):
-                    self.llm.llm_engine.model_executor.shutdown()
+                
+                if hasattr(self.llm.llm_engine, 'model_executor') and self.llm.llm_engine.model_executor:
+                    if hasattr(self.llm.llm_engine.model_executor, 'shutdown'):
+                        self.llm.llm_engine.model_executor.shutdown()
+                    del self.llm.llm_engine.model_executor
+
+                if hasattr(self.llm.llm_engine, 'driver_worker'):
+                    del self.llm.llm_engine.driver_worker
+
             except Exception as e:
                 pass
+
             del self.llm
             self.llm = None
+
+        try:
+            from vllm.distributed import destroy_model_parallel, destroy_distributed_environment
+            destroy_model_parallel()
+            destroy_distributed_environment()
+        except Exception:
+            pass
+
+        if torch.distributed.is_initialized():
+            try:
+                torch.distributed.destroy_process_group()
+            except Exception:
+                pass
 
         if hasattr(self, 'model') and self.model is not None:
             try:
@@ -180,11 +206,13 @@ class DPST:
             self.IEclient = None
 
         gc.collect()
+        gc.collect()
+
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
             torch.cuda.ipc_collect()
 
-        print("Cleanup complete. GPU memory freed.", flush=True)
+        print("Cleanup complete. GPU VRAM freed.", flush=True)
 
     def exponential(self, candidates, epsilon, sensitivity=1):
         probabilities = [np.exp(epsilon * x[1] / (2 * sensitivity)) for x in candidates]
